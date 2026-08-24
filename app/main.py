@@ -8,7 +8,7 @@ import sqlite3
 import uuid
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,9 +22,9 @@ STATIC_DIR = pathlib.Path(__file__).resolve().parent / "static"
 
 class ConversationCreate(BaseModel):
     engine_key: str
-    system_prompt: str = ""
+    system_prompt: str = Field(default="", max_length=10000)
     think: bool = False
-    title: str = "New Conversation"
+    title: str = Field(default="New Conversation", min_length=1, max_length=200)
 
 
 def create_app(
@@ -74,7 +74,7 @@ def create_app(
     def list_conversations():
         with sqlite3.connect(app.state.db_path) as con:
             con.row_factory = sqlite3.Row
-            rows = con.execute("SELECT * FROM conversations ORDER BY created_at DESC").fetchall()
+            rows = con.execute("SELECT * FROM conversations ORDER BY created_at DESC, id DESC").fetchall()
         return [read_conversation(row) for row in rows]
 
     @app.get("/api/conversations/{conversation_id}")
