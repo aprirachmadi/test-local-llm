@@ -25,8 +25,6 @@ class EngineStatus:
 def _start_commands(engine: EngineConfig) -> tuple[str, str]:
     command = f"bash scripts/start-{engine.key}.sh"
     wsl_command = f"wsl bash scripts/start-{engine.key}.sh"
-    if engine.key in {"vllm", "sglang"}:
-        command = wsl_command
     return command, wsl_command
 
 
