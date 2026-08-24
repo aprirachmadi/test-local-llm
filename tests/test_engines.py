@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import EngineConfig
@@ -70,3 +73,130 @@ def test_engines_endpoint_uses_injected_mock_transport(tmp_path):
     assert response.status_code == 200
     assert response.json()[0]["status"] == "up"
     assert calls == ["test.test"]
+
+
+def _smoke_config(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+        [app]
+        host = "127.0.0.1"
+        port = 8765
+        smoke_prompt = "Reply with exactly one word: pong"
+
+        [engines.test]
+        name = "Test"
+        base_url = "http://test.test:1234/v1"
+        model = "test-model"
+        enabled = true
+
+        [engines.disabled]
+        name = "Disabled"
+        base_url = "http://disabled.test:1234/v1"
+        model = "disabled-model"
+        enabled = false
+        """,
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def test_smoke_test_streams_success_and_sends_prompt(tmp_path):
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=b'data: {"choices":[{"delta":{"content":"pong"}}]}\n\ndata: [DONE]\n\n',
+        )
+
+    app = create_app(
+        config_path=_smoke_config(tmp_path),
+        db_path=tmp_path / "chatbot.db",
+        engine_transport=httpx.MockTransport(handler),
+    )
+    response = TestClient(app).post("/api/engines/test/smoke-test")
+
+    assert response.status_code == 200
+    events = [json.loads(event.removeprefix("data: ")) for event in response.text.strip().split("\n\n")]
+    assert events == [
+        {"engine_key": "test", "success": True, "content": "pong"},
+    ]
+    assert response.text.endswith("\n\n")
+    assert requests[0].url.path == "/v1/chat/completions"
+    assert json.loads(requests[0].content) == {
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "Reply with exactly one word: pong"}],
+        "stream": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_type"),
+    [
+        ("http", "http_error"),
+        ("timeout", "timeout"),
+        ("connection", "connection_refused"),
+        ("truncated", "truncated_stream"),
+    ],
+)
+def test_smoke_test_reports_failure_modes(tmp_path, failure, expected_type):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if failure == "http":
+            return httpx.Response(503)
+        if failure == "timeout":
+            raise httpx.ReadTimeout("timed out")
+        if failure == "connection":
+            raise httpx.ConnectError("refused")
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n',
+        )
+
+    app = create_app(
+        config_path=_smoke_config(tmp_path),
+        db_path=tmp_path / "chatbot.db",
+        engine_transport=httpx.MockTransport(handler),
+    )
+    response = TestClient(app).post("/api/engines/test/smoke-test")
+
+    assert response.status_code == 200
+    assert f'"error_type": "{expected_type}"' in response.text
+    assert '"success": false' in response.text
+
+
+def test_smoke_test_all_skips_disabled_engines(tmp_path):
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.host or "")
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=b'data: {"choices":[{"delta":{"content":"pong"}}]}\n\ndata: [DONE]\n\n',
+        )
+
+    app = create_app(
+        config_path=_smoke_config(tmp_path),
+        db_path=tmp_path / "chatbot.db",
+        engine_transport=httpx.MockTransport(handler),
+    )
+    response = TestClient(app).post("/api/engines/smoke-test")
+
+    assert response.status_code == 200
+    assert '"engine_key": "test"' in response.text
+    assert "disabled" not in response.text
+    assert calls == ["test.test"]
+
+
+def test_smoke_test_rejects_unknown_and_disabled_engines(tmp_path):
+    app = create_app(
+        config_path=_smoke_config(tmp_path), db_path=tmp_path / "chatbot.db"
+    )
+    client = TestClient(app)
+
+    assert client.post("/api/engines/missing/smoke-test").status_code == 404
+    assert client.post("/api/engines/disabled/smoke-test").status_code == 400

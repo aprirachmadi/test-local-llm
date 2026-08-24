@@ -129,8 +129,9 @@
           });
         }
       } catch (error) {
-        const key = url.includes('/smoke-test') ? url.split('/api/engines/')[1].split('/')[0] : '';
-        if (key) updateEngineResult(key, { error_type: 'request_error', message: error.message });
+        const key = url === '/api/engines/smoke-test' ? null : url.split('/api/engines/')[1].split('/')[0];
+        const keys = key ? [key] : [...document.querySelectorAll('[data-engine-result]')].map(node => node.dataset.engineResult);
+        keys.forEach(engineKey => updateEngineResult(engineKey, { error_type: 'request_error', message: error.message }));
       } finally {
         buttons.forEach(button => { button.disabled = false; });
       }

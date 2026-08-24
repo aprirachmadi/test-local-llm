@@ -228,7 +228,7 @@ def create_app(
 
         def stream():
             for result in smoke_test_stream(engine, cfg.app.smoke_prompt, transport=engine_transport):
-                yield f"data: {json.dumps({'engine_key': engine_key, **result})}\\n\\n"
+                yield f"data: {json.dumps({'engine_key': engine_key, **result})}\n\n"
 
         return StreamingResponse(stream(), media_type="text/event-stream")
 
@@ -239,7 +239,7 @@ def create_app(
         def stream():
             for engine in enabled_engines:
                 for result in smoke_test_stream(engine, cfg.app.smoke_prompt, transport=engine_transport):
-                    yield f"data: {json.dumps({'engine_key': engine.key, **result})}\\n\\n"
+                    yield f"data: {json.dumps({'engine_key': engine.key, **result})}\n\n"
 
         return StreamingResponse(stream(), media_type="text/event-stream")
 
