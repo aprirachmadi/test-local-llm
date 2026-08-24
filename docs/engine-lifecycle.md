@@ -6,7 +6,7 @@ The chatbot is connect-only: it never starts, stops, pulls, or downloads a Model
 
 Prepare each serving Engine and Model outside this repository. For WSL2 vLLM and SGLang on the RTX 5060 Ti, use Ubuntu with CUDA 12.8+ and a compatible PyTorch build, then manually install vLLM (>=0.17.0) and SGLang (0.5.x) in WSL. Copy the already-downloaded Qwen3.5-9B 4-bit Model into WSL and set `MODEL_PATH` to it.
 
-The repository deliberately provides no installer. If a Model is absent, stop and have the operator download or copy it. The scripts fail before launching when a local Model path is missing; they never run package managers, `ollama pull`, `huggingface-cli`, or `snapshot_download`.
+The repository deliberately provides no installer. If a Model is absent, stop and have the operator download or copy it. The scripts fail before launching when a required local Model or Ollama-installed Model is missing; they never run package managers, `ollama pull`, `huggingface-cli`, or `snapshot_download`.
 
 - Make each serving Engine executable available on `PATH` in its host or WSL environment.
 - Put local Qwen3.5-9B 4-bit files in `models/`, or set `MODEL_PATH` to an existing path.
