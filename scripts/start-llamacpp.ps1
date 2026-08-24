@@ -1,7 +1,9 @@
 $ErrorActionPreference = 'Stop'
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location (Split-Path -Parent $scriptDir)
 
 # Engine stanza: [engines.llamacpp], http://127.0.0.1:8080/v1, qwen3.5-9b
-$modelPath = if ($env:MODEL_PATH) { $env:MODEL_PATH } else { Join-Path $PWD 'models/Qwen3.5-9B-Instruct-Q4_K_M.gguf' }
+$modelPath = if ($env:MODEL_PATH) { $env:MODEL_PATH } else { Join-Path (Get-Location) 'models/Qwen3.5-9B-Instruct-Q4_K_M.gguf' }
 $llamaServer = if ($env:LLAMA_SERVER) { $env:LLAMA_SERVER } else { 'llama-server' }
 
 if (-not (Test-Path -LiteralPath $modelPath -PathType Leaf)) {
