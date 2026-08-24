@@ -25,6 +25,18 @@
     button { background: var(--accent); color: #0b1020; border: none; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-weight: 600; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     .small { font-size: 12px; color: var(--muted); }
+    .engine { border-top: 1px solid var(--border); padding: 10px 0; }
+    .engine:first-child { border-top: 0; padding-top: 0; }
+    .engine-head { display: flex; justify-content: space-between; gap: 8px; }
+    .engine-name { font-weight: 600; }
+    .status { font-size: 11px; text-transform: uppercase; }
+    .status.up { color: #8bd5a5; }
+    .status.down { color: #f28b82; }
+    .status.disabled { color: var(--muted); }
+    .engine-meta { margin-top: 4px; }
+    .command { margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .copy-command { margin-top: 6px; padding: 5px 8px; font-size: 11px; }
+    @media (max-width: 700px) { main { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--border); } }
   </style>
 </head>
 <body>
@@ -36,11 +48,22 @@
     <aside>
       <div class="panel">
         <h2>Conversations</h2>
-        <div class="small">Persisted threads pinned to one Engine + Model.</div>
+        <form id="new-conversation">
+          <input name="title" placeholder="Title" required style="width:100%; margin-bottom:8px" />
+          <select name="engine_key" required style="width:100%; margin-bottom:8px">
+            <option value="ollama">Ollama</option>
+            <option value="vllm">vLLM</option>
+            <option value="sglang">SGLang</option>
+            <option value="llamacpp">llama.cpp</option>
+          </select>
+          <button type="submit">New conversation</button>
+        </form>
+        <div id="conversations" style="margin-top:12px"></div>
       </div>
       <div class="panel">
         <h2>Engines</h2>
         <div class="small">Configured in <code>config.toml</code>. Health via <code>/v1/models</code>.</div>
+        <div id="engines" aria-live="polite" style="margin-top: 8px">checking engines…</div>
       </div>
     </aside>
     <section id="chat">
@@ -52,11 +75,114 @@
     <button disabled>Send</button>
   </footer>
   <script>
+    const conversationList = document.getElementById('conversations');
+    const chat = document.getElementById('chat');
+
+    function showConversation(conversation) {
+      chat.innerHTML = '';
+      const message = document.createElement('div');
+      message.className = 'msg assistant';
+      const title = document.createElement('strong');
+      title.textContent = conversation.title;
+      const metadata = document.createElement('span');
+      metadata.className = 'small';
+      metadata.textContent = `${conversation.engine_key} · ${conversation.model}`;
+      const prompt = document.createElement('span');
+      prompt.textContent = conversation.system_prompt || 'No system prompt.';
+      message.append(title, document.createElement('br'), metadata, document.createElement('br'), prompt);
+      chat.appendChild(message);
+    }
+
+    async function loadConversations() {
+      const response = await fetch('/api/conversations');
+      const conversations = await response.json();
+      conversationList.innerHTML = '';
+      conversations.forEach(conversation => {
+        const item = document.createElement('div');
+        item.className = 'small';
+        item.style = 'display:flex; gap:6px; align-items:center; margin-bottom:8px';
+        const openButton = document.createElement('button');
+        openButton.type = 'button';
+        openButton.style = 'flex:1; text-align:left';
+        openButton.textContent = conversation.title;
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.setAttribute('aria-label', `Delete ${conversation.title}`);
+        deleteButton.textContent = '×';
+        item.append(openButton, deleteButton);
+        openButton.addEventListener('click', () => showConversation(conversation));
+        deleteButton.addEventListener('click', async () => {
+          await fetch(`/api/conversations/${conversation.id}`, { method: 'DELETE' });
+          await loadConversations();
+        });
+        conversationList.appendChild(item);
+      });
+    }
+
+    document.getElementById('new-conversation').addEventListener('submit', async event => {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const response = await fetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: form.get('title'), engine_key: form.get('engine_key') })
+      });
+      if (response.ok) {
+        const conversation = await response.json();
+        event.target.reset();
+        await loadConversations();
+        showConversation(conversation);
+      } else {
+        alert((await response.json()).detail);
+      }
+    });
+
+    loadConversations();
     fetch('/api/health').then(r => r.json()).then(j => {
       document.getElementById('health').textContent = j.status === 'ok' ? 'ok' : JSON.stringify(j);
     }).catch(e => {
       document.getElementById('health').textContent = 'health check failed';
     });
+
+    const enginesElement = document.getElementById('engines');
+    const renderEngines = engines => {
+      enginesElement.replaceChildren(...engines.map(engine => {
+        const element = document.createElement('div');
+        element.className = 'engine';
+        const head = document.createElement('div');
+        head.className = 'engine-head';
+        const name = document.createElement('span');
+        name.className = 'engine-name';
+        name.textContent = engine.name;
+        const status = document.createElement('span');
+        status.className = `status ${engine.status}`;
+        status.textContent = engine.status;
+        head.append(name, status);
+        const meta = document.createElement('div');
+        meta.className = 'small engine-meta';
+        meta.textContent = `${engine.base_url} · ${engine.model}`;
+        element.append(head, meta);
+        if (engine.status === 'down') {
+          for (const [label, command] of [['Host', engine.start_command], ['WSL', engine.wsl_start_command]]) {
+            const commandElement = document.createElement('div');
+            commandElement.className = 'small command';
+            commandElement.textContent = `${label}: ${command}`;
+            const button = document.createElement('button');
+            button.className = 'copy-command';
+            button.type = 'button';
+            button.textContent = `Copy ${label}`;
+            button.addEventListener('click', () => navigator.clipboard.writeText(command));
+            element.append(commandElement, button);
+          }
+        }
+        return element;
+      }));
+    };
+    const refreshEngines = () => fetch('/api/engines').then(response => response.json()).then(renderEngines).catch(() => {
+      enginesElement.textContent = 'engine health unavailable';
+    });
+    refreshEngines();
+    setInterval(refreshEngines, 10000);
   </script>
 </body>
 </html>
