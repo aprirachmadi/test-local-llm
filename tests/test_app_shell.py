@@ -85,6 +85,67 @@ def test_health_endpoint_uses_temp_db_and_mocked_engine_http(tmp_path):
     _ = transport
 
 
+def test_create_conversation_pins_enabled_engine_and_model(tmp_path):
+    config_path = _write_config(tmp_path, _valid_toml())
+    db_path = tmp_path / "data" / "chatbot.db"
+    from app.main import create_app
+
+    client = TestClient(create_app(config_path=config_path, db_path=db_path))
+
+    response = client.post(
+        "/api/conversations",
+        json={
+            "engine_key": "ollama",
+            "system_prompt": "Be concise.",
+            "think": True,
+            "title": "Planning",
+        },
+    )
+
+    assert response.status_code == 201
+    conversation = response.json()
+    assert conversation["id"]
+    assert conversation["engine_key"] == "ollama"
+    assert conversation["model"] == "qwen3.5:9b"
+    assert conversation["system_prompt"] == "Be concise."
+    assert conversation["think"] is True
+    assert conversation["title"] == "Planning"
+    assert conversation["created_at"] == conversation["updated_at"]
+
+
+def test_conversations_crud_persists_and_rejects_disabled_engine(tmp_path):
+    config = _valid_toml().replace('model = "qwen3.5:9b"\nenabled = true', 'model = "qwen3.5:9b"\nenabled = false', 1)
+    config_path = _write_config(tmp_path, config)
+    db_path = tmp_path / "data" / "chatbot.db"
+    from app.main import create_app
+
+    client = TestClient(create_app(config_path=config_path, db_path=db_path))
+    disabled = client.post("/api/conversations", json={"engine_key": "ollama"})
+    assert disabled.status_code == 400
+    assert "disabled" in disabled.json()["detail"]
+
+    first = client.post("/api/conversations", json={"engine_key": "vllm", "title": "First"})
+    second = client.post("/api/conversations", json={"engine_key": "sglang", "title": "Second"})
+    assert first.status_code == 201
+    assert second.status_code == 201
+
+    listed = client.get("/api/conversations")
+    assert [item["title"] for item in listed.json()] == ["Second", "First"]
+
+    conversation_id = first.json()["id"]
+    reopened = client.get(f"/api/conversations/{conversation_id}")
+    assert reopened.status_code == 200
+    assert reopened.json()["model"] == "qwen3.5-9b"
+
+    recreated_client = TestClient(create_app(config_path=config_path, db_path=db_path))
+    assert recreated_client.get("/api/conversations").status_code == 200
+    assert len(recreated_client.get("/api/conversations").json()) == 2
+
+    deleted = recreated_client.delete(f"/api/conversations/{conversation_id}")
+    assert deleted.status_code == 204
+    assert recreated_client.get(f"/api/conversations/{conversation_id}").status_code == 404
+
+
 def test_config_rejects_missing_file(tmp_path):
     from app.config import load_config
 

@@ -25,18 +25,6 @@
     button { background: var(--accent); color: #0b1020; border: none; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-weight: 600; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     .small { font-size: 12px; color: var(--muted); }
-    .engine { border-top: 1px solid var(--border); padding: 10px 0; }
-    .engine:first-child { border-top: 0; padding-top: 0; }
-    .engine-head { display: flex; justify-content: space-between; gap: 8px; }
-    .engine-name { font-weight: 600; }
-    .status { font-size: 11px; text-transform: uppercase; }
-    .status.up { color: #8bd5a5; }
-    .status.down { color: #f28b82; }
-    .status.disabled { color: var(--muted); }
-    .engine-meta { margin-top: 4px; }
-    .command { margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .copy-command { margin-top: 6px; padding: 5px 8px; font-size: 11px; }
-    @media (max-width: 700px) { main { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--border); } }
   </style>
 </head>
 <body>
@@ -62,8 +50,7 @@
       </div>
       <div class="panel">
         <h2>Engines</h2>
-        <div class="small">Configured in <code>config.toml</code>. Health via <code>/v1/models</code>.</div>
-        <div id="engines" aria-live="polite" style="margin-top: 8px">checking engines…</div>
+        <div class="small">Configured in <code>config.toml</code>.</div>
       </div>
     </aside>
     <section id="chat">
@@ -143,46 +130,6 @@
     }).catch(e => {
       document.getElementById('health').textContent = 'health check failed';
     });
-
-    const enginesElement = document.getElementById('engines');
-    const renderEngines = engines => {
-      enginesElement.replaceChildren(...engines.map(engine => {
-        const element = document.createElement('div');
-        element.className = 'engine';
-        const head = document.createElement('div');
-        head.className = 'engine-head';
-        const name = document.createElement('span');
-        name.className = 'engine-name';
-        name.textContent = engine.name;
-        const status = document.createElement('span');
-        status.className = `status ${engine.status}`;
-        status.textContent = engine.status;
-        head.append(name, status);
-        const meta = document.createElement('div');
-        meta.className = 'small engine-meta';
-        meta.textContent = `${engine.base_url} · ${engine.model}`;
-        element.append(head, meta);
-        if (engine.status === 'down') {
-          for (const [label, command] of [['Host', engine.start_command], ['WSL', engine.wsl_start_command]]) {
-            const commandElement = document.createElement('div');
-            commandElement.className = 'small command';
-            commandElement.textContent = `${label}: ${command}`;
-            const button = document.createElement('button');
-            button.className = 'copy-command';
-            button.type = 'button';
-            button.textContent = `Copy ${label}`;
-            button.addEventListener('click', () => navigator.clipboard.writeText(command));
-            element.append(commandElement, button);
-          }
-        }
-        return element;
-      }));
-    };
-    const refreshEngines = () => fetch('/api/engines').then(response => response.json()).then(renderEngines).catch(() => {
-      enginesElement.textContent = 'engine health unavailable';
-    });
-    refreshEngines();
-    setInterval(refreshEngines, 10000);
   </script>
 </body>
 </html>
