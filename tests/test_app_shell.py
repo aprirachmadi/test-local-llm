@@ -209,6 +209,136 @@ def test_create_app_uses_config_host_port_and_smoke_prompt(tmp_path):
     assert set(app.state.config.engines.keys()) == {"ollama", "vllm", "sglang", "llamacpp"}
 
 
+def test_streaming_message_persists_history_and_honors_conversation_settings(tmp_path):
+    config_path = _write_config(tmp_path, _valid_toml())
+    db_path = tmp_path / "data" / "chatbot.db"
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                b'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n'
+                b'data: {"choices":[{"delta":{}}]}\n\n'
+                b'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'
+                b'data: [DONE]\n\n'
+            ),
+        )
+
+    from app.main import create_app
+
+    app = create_app(config_path=config_path, db_path=db_path, engine_transport=httpx.MockTransport(handler))
+    client = TestClient(app)
+    conversation = client.post(
+        "/api/conversations",
+        json={"engine_key": "ollama", "system_prompt": "Be concise.", "think": True},
+    ).json()
+
+    response = client.post(
+        f"/api/conversations/{conversation['id']}/messages",
+        json={"content": "Hello"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert '"content": "Hel"' in response.text
+    assert '"content": "lo"' in response.text
+    assert "data: [DONE]\n\n" in response.text
+    payload = requests[0].content.decode()
+    assert '"model":"qwen3.5:9b"' in payload
+    assert '"role":"system"' in payload
+    assert '"content":"Be concise."' in payload
+    assert '"think":true' in payload
+    messages = client.get(f"/api/conversations/{conversation['id']}/messages").json()
+    assert [(message["role"], message["content"]) for message in messages] == [
+        ("user", "Hello"),
+        ("assistant", "Hello"),
+    ]
+
+    second = client.post(
+        f"/api/conversations/{conversation['id']}/messages",
+        json={"content": "Again"},
+    )
+    assert second.status_code == 200
+    second_payload = requests[1].content.decode()
+    assert '"content":"Hello"' in second_payload
+    assert '"content":"Again"' in second_payload
+
+
+def test_streaming_engine_error_does_not_persist_partial_history(tmp_path):
+    config_path = _write_config(tmp_path, _valid_toml())
+    db_path = tmp_path / "data" / "chatbot.db"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+                b'data: {"error":{"message":"Engine failed"}}\n\n'
+            ),
+        )
+
+    from app.main import create_app
+
+    app = create_app(config_path=config_path, db_path=db_path, engine_transport=httpx.MockTransport(handler))
+    client = TestClient(app)
+    conversation = client.post("/api/conversations", json={"engine_key": "ollama"}).json()
+
+    response = client.post(
+        f"/api/conversations/{conversation['id']}/messages",
+        json={"content": "Hello"},
+    )
+
+    assert response.status_code == 200
+    assert "Engine failed" in response.text
+    assert client.get(f"/api/conversations/{conversation['id']}/messages").json() == []
+
+
+def test_streaming_engine_timeout_is_reported_without_persisting(tmp_path):
+    config_path = _write_config(tmp_path, _valid_toml())
+    db_path = tmp_path / "data" / "chatbot.db"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("Engine timed out")
+
+    from app.main import create_app
+
+    app = create_app(config_path=config_path, db_path=db_path, engine_transport=httpx.MockTransport(handler))
+    client = TestClient(app)
+    conversation = client.post("/api/conversations", json={"engine_key": "ollama"}).json()
+
+    response = client.post(
+        f"/api/conversations/{conversation['id']}/messages",
+        json={"content": "Hello"},
+    )
+
+    assert response.status_code == 200
+    assert "Engine timed out" in response.text
+    assert client.get(f"/api/conversations/{conversation['id']}/messages").json() == []
+
+
+def test_update_conversation_settings_persists(tmp_path):
+    config_path = _write_config(tmp_path, _valid_toml())
+    db_path = tmp_path / "data" / "chatbot.db"
+    from app.main import create_app
+
+    client = TestClient(create_app(config_path=config_path, db_path=db_path))
+    conversation = client.post("/api/conversations", json={"engine_key": "ollama"}).json()
+
+    response = client.patch(
+        f"/api/conversations/{conversation['id']}",
+        json={"system_prompt": "Use bullets.", "think": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["system_prompt"] == "Use bullets."
+    assert response.json()["think"] is True
+    assert client.get(f"/api/conversations/{conversation['id']}").json()["think"] is True
+
+
 def test_httpx_mock_transport_seam_smoke(tmp_path):
     config_path = _write_config(tmp_path, _valid_toml())
     db_path = tmp_path / "data2" / "chatbot.db"

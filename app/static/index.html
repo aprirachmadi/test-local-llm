@@ -25,6 +25,12 @@
     button { background: var(--accent); color: #0b1020; border: none; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-weight: 600; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     .small { font-size: 12px; color: var(--muted); }
+    .engine-row { margin-bottom: 12px; }
+    .engine-header { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+    .engine-result { margin-top:6px; white-space:pre-wrap; }
+    .engine-result.success { color:#9ece6a; }
+    .engine-result.failure { color:#f7768e; }
+    #test-all { width:100%; margin-bottom:10px; }
   </style>
 </head>
 <body>
@@ -50,34 +56,106 @@
       </div>
       <div class="panel">
         <h2>Engines</h2>
-        <div class="small">Configured in <code>config.toml</code>.</div>
+        <button id="test-all" type="button">Test all</button>
+        <div id="engines"><div class="small">Loading engines…</div></div>
       </div>
     </aside>
     <section id="chat">
-      <div class="msg assistant">App shell ready. Engine chat and SSE streaming land in the next slice.</div>
+      <div class="msg assistant">Select a conversation to start chatting.</div>
     </section>
   </main>
   <footer>
-    <input id="prompt" placeholder="Message (wired in a later slice)" style="flex:1" />
-    <button disabled>Send</button>
+    <input id="prompt" placeholder="Message" style="flex:1" />
+    <button id="send">Send</button>
+    <button id="cancel" hidden>Cancel</button>
   </footer>
+
   <script>
     const conversationList = document.getElementById('conversations');
     const chat = document.getElementById('chat');
+    const prompt = document.getElementById('prompt');
+    const send = document.getElementById('send');
+    const cancel = document.getElementById('cancel');
+    const enginesPanel = document.getElementById('engines');
+    const testAll = document.getElementById('test-all');
+    let activeConversation = null;
+    let controller = null;
 
-    function showConversation(conversation) {
-      chat.innerHTML = '';
+    function appendMessage(role, content = '') {
       const message = document.createElement('div');
-      message.className = 'msg assistant';
-      const title = document.createElement('strong');
-      title.textContent = conversation.title;
-      const metadata = document.createElement('span');
-      metadata.className = 'small';
-      metadata.textContent = `${conversation.engine_key} · ${conversation.model}`;
-      const prompt = document.createElement('span');
-      prompt.textContent = conversation.system_prompt || 'No system prompt.';
-      message.append(title, document.createElement('br'), metadata, document.createElement('br'), prompt);
+      message.className = `msg ${role}`;
+      message.textContent = content;
       chat.appendChild(message);
+      return message;
+    }
+
+    async function showConversation(conversation) {
+      activeConversation = conversation;
+      chat.innerHTML = '';
+      appendMessage('assistant', `${conversation.title}\n${conversation.engine_key} · ${conversation.model}`);
+      const response = await fetch(`/api/conversations/${conversation.id}/messages`);
+      (await response.json()).forEach(message => appendMessage(message.role, message.content));
+    }
+
+    function updateEngineResult(engineKey, result) {
+      const resultNode = document.querySelector(`[data-engine-result="${engineKey}"]`);
+      if (!resultNode) return;
+      if (result.content) resultNode.textContent += result.content;
+      if (result.error_type) {
+        resultNode.className = 'engine-result failure';
+        resultNode.textContent = `${result.error_type}: ${result.message}`;
+      } else if (result.success && result.content) {
+        resultNode.className = 'engine-result success';
+      }
+    }
+
+    async function runSmokeTest(url, buttons) {
+      buttons.forEach(button => { button.disabled = true; });
+      try {
+        const response = await fetch(url, { method: 'POST' });
+        if (!response.ok) throw new Error((await response.json()).detail);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop();
+          events.forEach(event => {
+            const data = event.split('\n').find(line => line.startsWith('data: '));
+            if (data) updateEngineResult(JSON.parse(data.slice(6)).engine_key, JSON.parse(data.slice(6)));
+          });
+        }
+      } catch (error) {
+        const key = url.includes('/smoke-test') ? url.split('/api/engines/')[1].split('/')[0] : '';
+        if (key) updateEngineResult(key, { error_type: 'request_error', message: error.message });
+      } finally {
+        buttons.forEach(button => { button.disabled = false; });
+      }
+    }
+
+    async function loadEngines() {
+      const response = await fetch('/api/engines');
+      const engines = await response.json();
+      const select = document.querySelector('[name="engine_key"]');
+      select.innerHTML = '';
+      engines.forEach(engine => {
+        if (engine.enabled) select.append(new Option(engine.name, engine.key));
+      });
+      enginesPanel.innerHTML = '';
+      engines.forEach(engine => {
+        const row = document.createElement('div');
+        row.className = 'engine-row';
+        row.innerHTML = `<div class="engine-header"><strong>${engine.name}</strong><span class="small">${engine.status}</span></div><button type="button" ${engine.enabled ? '' : 'disabled'}>Test</button><div class="engine-result small" data-engine-result="${engine.key}"></div>`;
+        const button = row.querySelector('button');
+        button.addEventListener('click', () => {
+          row.querySelector('[data-engine-result]').textContent = '';
+          runSmokeTest(`/api/engines/${engine.key}/smoke-test`, [button, testAll]);
+        });
+        enginesPanel.appendChild(row);
+      });
     }
 
     async function loadConversations() {
@@ -100,6 +178,10 @@
         openButton.addEventListener('click', () => showConversation(conversation));
         deleteButton.addEventListener('click', async () => {
           await fetch(`/api/conversations/${conversation.id}`, { method: 'DELETE' });
+          if (activeConversation?.id === conversation.id) {
+            activeConversation = null;
+            chat.innerHTML = '';
+          }
           await loadConversations();
         });
         conversationList.appendChild(item);
@@ -110,26 +192,68 @@
       event.preventDefault();
       const form = new FormData(event.target);
       const response = await fetch('/api/conversations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: form.get('title'), engine_key: form.get('engine_key') })
       });
       if (response.ok) {
         const conversation = await response.json();
         event.target.reset();
         await loadConversations();
-        showConversation(conversation);
-      } else {
-        alert((await response.json()).detail);
-      }
+        await showConversation(conversation);
+      } else alert((await response.json()).detail);
     });
 
-    loadConversations();
-    fetch('/api/health').then(r => r.json()).then(j => {
-      document.getElementById('health').textContent = j.status === 'ok' ? 'ok' : JSON.stringify(j);
-    }).catch(e => {
-      document.getElementById('health').textContent = 'health check failed';
+    async function sendMessage() {
+      if (!activeConversation || !prompt.value.trim() || controller) return;
+      const content = prompt.value.trim();
+      prompt.value = '';
+      appendMessage('user', content);
+      const assistant = appendMessage('assistant');
+      controller = new AbortController();
+      send.disabled = true;
+      cancel.hidden = false;
+      try {
+        const response = await fetch(`/api/conversations/${activeConversation.id}/messages`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content }), signal: controller.signal
+        });
+        if (!response.ok) throw new Error((await response.text()) || `Request failed (${response.status})`);
+        if (!response.body) throw new Error('Engine returned no stream');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop();
+          events.forEach(event => {
+            const data = event.split('\n').find(line => line.startsWith('data: '));
+            if (!data || data === 'data: [DONE]') return;
+            if (event.startsWith('event: error')) throw new Error(JSON.parse(data.slice(6)).message);
+            assistant.textContent += JSON.parse(data.slice(6)).content || '';
+          });
+        }
+      } catch (error) {
+        if (error.name !== 'AbortError') assistant.textContent += `\n[Error: ${error.message}]`;
+      } finally {
+        controller = null;
+        send.disabled = false;
+        cancel.hidden = true;
+      }
+    }
+
+    testAll.addEventListener('click', () => {
+      document.querySelectorAll('[data-engine-result]').forEach(node => { node.textContent = ''; node.className = 'engine-result small'; });
+      runSmokeTest('/api/engines/smoke-test', [testAll, ...document.querySelectorAll('.engine-row button')]);
     });
+    send.addEventListener('click', sendMessage);
+    prompt.addEventListener('keydown', event => { if (event.key === 'Enter') sendMessage(); });
+    cancel.addEventListener('click', () => controller?.abort());
+    loadConversations();
+    loadEngines().catch(() => { enginesPanel.textContent = 'Engine inventory failed'; });
+    fetch('/api/health').then(r => r.json()).then(j => { document.getElementById('health').textContent = j.status === 'ok' ? 'ok' : JSON.stringify(j); }).catch(() => { document.getElementById('health').textContent = 'health check failed'; });
   </script>
 </body>
 </html>
