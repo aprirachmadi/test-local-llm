@@ -20,25 +20,25 @@ def _valid_toml() -> str:
         [engines.ollama]
         name = "Ollama"
         base_url = "http://127.0.0.1:11434/v1"
-        model = "qwen3.5:9b"
+        model = "qwen3.5:4b"
         enabled = true
 
         [engines.vllm]
         name = "vLLM"
         base_url = "http://127.0.0.1:8000/v1"
-        model = "qwen3.5-9b"
+        model = "qwen3.5-4b"
         enabled = true
 
         [engines.sglang]
         name = "SGLang"
         base_url = "http://127.0.0.1:30000/v1"
-        model = "qwen3.5-9b"
+        model = "qwen3.5-4b"
         enabled = true
 
         [engines.llamacpp]
         name = "llama.cpp"
         base_url = "http://127.0.0.1:8080/v1"
-        model = "qwen3.5-9b"
+        model = "qwen3.5-4b"
         enabled = true
         """
     )
@@ -106,7 +106,7 @@ def test_create_conversation_pins_enabled_engine_and_model(tmp_path):
     conversation = response.json()
     assert conversation["id"]
     assert conversation["engine_key"] == "ollama"
-    assert conversation["model"] == "qwen3.5:9b"
+    assert conversation["model"] == "qwen3.5:4b"
     assert conversation["system_prompt"] == "Be concise."
     assert conversation["think"] is True
     assert conversation["title"] == "Planning"
@@ -114,7 +114,7 @@ def test_create_conversation_pins_enabled_engine_and_model(tmp_path):
 
 
 def test_conversations_crud_persists_and_rejects_disabled_engine(tmp_path):
-    config = _valid_toml().replace('model = "qwen3.5:9b"\nenabled = true', 'model = "qwen3.5:9b"\nenabled = false', 1)
+    config = _valid_toml().replace('model = "qwen3.5:4b"\nenabled = true', 'model = "qwen3.5:4b"\nenabled = false', 1)
     config_path = _write_config(tmp_path, config)
     db_path = tmp_path / "data" / "chatbot.db"
     from app.main import create_app
@@ -135,7 +135,7 @@ def test_conversations_crud_persists_and_rejects_disabled_engine(tmp_path):
     conversation_id = first.json()["id"]
     reopened = client.get(f"/api/conversations/{conversation_id}")
     assert reopened.status_code == 200
-    assert reopened.json()["model"] == "qwen3.5-9b"
+    assert reopened.json()["model"] == "qwen3.5-4b"
 
     recreated_client = TestClient(create_app(config_path=config_path, db_path=db_path))
     assert recreated_client.get("/api/conversations").status_code == 200
@@ -168,7 +168,7 @@ def test_config_rejects_missing_app_section(tmp_path):
         [engines.ollama]
         name = "Ollama"
         base_url = "http://127.0.0.1:11434/v1"
-        model = "qwen3.5:9b"
+        model = "qwen3.5:4b"
         enabled = true
         """
     )
@@ -247,7 +247,7 @@ def test_streaming_message_persists_history_and_honors_conversation_settings(tmp
     assert '"content": "lo"' in response.text
     assert "data: [DONE]\n\n" in response.text
     payload = requests[0].content.decode()
-    assert '"model":"qwen3.5:9b"' in payload
+    assert '"model":"qwen3.5:4b"' in payload
     assert '"role":"system"' in payload
     assert '"content":"Be concise."' in payload
     assert '"think":true' in payload

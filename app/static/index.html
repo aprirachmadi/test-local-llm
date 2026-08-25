@@ -92,7 +92,7 @@
     async function showConversation(conversation) {
       activeConversation = conversation;
       chat.innerHTML = '';
-      appendMessage('assistant', `${conversation.title}\n${conversation.engine_key} · ${conversation.model} · 4-bit`);
+      appendMessage('assistant', `${conversation.title}\n${conversation.engine_key} · ${conversation.model}`);
       const response = await fetch(`/api/conversations/${conversation.id}/messages`);
       (await response.json()).forEach(message => appendMessage(message.role, message.content));
     }
@@ -149,7 +149,7 @@
       engines.forEach(engine => {
         const row = document.createElement('div');
         row.className = 'engine-row';
-        row.innerHTML = `<div class="engine-header"><strong>${engine.name}</strong><span class="small">${engine.status}</span></div><div class="small">${engine.model} · 4-bit</div><button type="button" ${engine.enabled ? '' : 'disabled'}>Test</button><div class="engine-result small" data-engine-result="${engine.key}"></div>`;
+        row.innerHTML = `<div class="engine-header"><strong>${engine.name}</strong><span class="small">${engine.status}</span></div><div class="small">${engine.model}</div><button type="button" ${engine.enabled ? '' : 'disabled'}>Test</button><div class="engine-result small" data-engine-result="${engine.key}"></div>`;
         const button = row.querySelector('button');
         button.addEventListener('click', () => {
           row.querySelector('[data-engine-result]').textContent = '';

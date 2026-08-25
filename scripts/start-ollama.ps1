@@ -1,9 +1,9 @@
 $ErrorActionPreference = 'Stop'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location (Split-Path -Parent $scriptDir)
-$modelInstalled = ollama list | Select-String -Pattern '^qwen3\.5:9b\s'
+$modelInstalled = ollama list | Select-String -Pattern '^qwen3\.5:4b\s'
 if (-not $modelInstalled) {
-  throw 'Ollama model qwen3.5:9b is not installed. Install it separately, then rerun this script; this script never downloads models.'
+  throw 'Ollama model qwen3.5:4b is not installed. Install it separately, then rerun this script; this script never downloads models.'
 }
 New-Item -ItemType Directory -Force -Path '.run' | Out-Null
 $previousOllamaHost = $env:OLLAMA_HOST
